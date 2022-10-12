@@ -1,10 +1,37 @@
+from datetime import datetime, timedelta
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import csv
 import os
-import re
 
-from utility import format_date
+region_identifiers = {'Clifton Down Station': 'STATION%5E2195',  # Clifton Down Station
+                      'Redlands Station': 'STATION%5E7640',  # Redlands Station
+                      'Redlands Region': 'REGION%5E20676',  # Redlands Region
+                      'Clifton Region': 'REGION%5E6574'  # Clifton Region
+                      }
+
+
+def get_url(identifier: str, page: int = 0, beds: tuple = (2, 2), price: tuple = (1000, 1500), radius: float = 0.25):
+    """Generates URLs for Scraping"""
+    min_bed, max_bed = beds
+    min_price, max_price = price
+    url = f'https://www.rightmove.co.uk/property-to-rent/find.html?locationIdentifier={identifier}&index={page * 24}&maxBedrooms={max_bed}&minBedrooms={min_bed}&maxPrice={max_price}&minPrice={min_price}&radius={radius}&propertyTypes=&includeLetAgreed=false&mustHave=&dontShow=&furnishTypes=&keywords='
+
+    return url
+
+
+def format_date(date):
+    if date == 'today':
+        return datetime.now().strftime("%d/%m/%Y")
+    elif date == 'yesterday':
+        return (datetime.now() - timedelta(days=1)).strftime("%d/%m/%Y")
+    else:
+        return date
+
+
+def send_home_assistant_notif():
+    pass
 
 
 def fetch(url):
@@ -20,7 +47,7 @@ def parse(html):
 
     titles = [title.text.strip() for title in content.findAll('h2', {'class': 'propertyCard-title'})]
     # (f'there is {len(titles)} titles')
-    # print(f'there are {len(titles)} properties found')
+    print(f'there are {len(titles)} properties found')
 
     addresses = [address['content'] for address in content.findAll('meta', {'itemprop': 'streetAddress'})]
     # (f'there is {len(addresses)} addresses')
@@ -96,6 +123,34 @@ def run(url):
     return parse(response.text)
 
 
+
+def right_move_scraper(max_pages: int = 1):
+    result_dict = {}
+    for key, value in region_identifiers.items():
+        for page in range(0, max_pages):
+            try:
+                url = get_url(value, page=page)
+                result_dict[f'{key}-{page}'] = run(url)
+            except Exception as e:
+                print(f'page {page} for {key} probably doesnt exist')
+
+    df = pd.DataFrame()
+    for key, value in result_dict.items():
+        for dict_ in value:
+            tmp_df = pd.DataFrame.from_dict([dict_])
+            tmp_df.columns = ['title', 'address', 'description', 'price', 'date', 'seller', 'image']
+            df = pd.concat([df, tmp_df])
+
+    df['date'] = df['date'].map(lambda x: datetime.strptime(x, '%d/%m/%Y').strftime('%Y-%m-%d'))
+    df = df.drop_duplicates(subset=['image'])
+    df = df.sort_values(by='date', ascending=False)
+
+    df_old = pd.read_csv('rightmove.csv')
+    if len(df_old[df_old['date'] == max(df_old['date'])]) == len(df[df['date'] == max(df['date'])]):
+        print('no new properties found')
+    else:
+        send_home_assistant_notif()
+        df.to_csv('rightmove.csv')
+
 if __name__ == '__main__':
-    url = 'https://www.rightmove.co.uk/property-to-rent/find.html?locationIdentifier=STATION%5E2195&index=0&maxBedrooms=2&minBedrooms=2&maxPrice=1500&minPrice=1000&radius=1.0&propertyTypes=&includeLetAgreed=false&mustHave=&dontShow=&furnishTypes=&keywords='
-    run(url)
+    right_move_scraper(5)

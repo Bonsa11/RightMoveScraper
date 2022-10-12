@@ -19,6 +19,10 @@ def format_date(date):
         return date
 
 
+def send_home_assistant_notif():
+    pass
+
+
 if __name__ == '__main__':
     print(format_date('today'))
     print(format_date('yesterday'))
